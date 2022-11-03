@@ -26,6 +26,7 @@ use League\Flysystem\UnableToGeneratePublicUrl;
 use League\Flysystem\UnableToGenerateTemporaryUrl;
 use League\Flysystem\UnableToMoveFile;
 use League\Flysystem\UnableToProvideChecksum;
+use League\Flysystem\UnableToPutObjectTagging;
 use League\Flysystem\UnableToReadFile;
 use League\Flysystem\UnableToRetrieveMetadata;
 use League\Flysystem\UnableToSetVisibility;
@@ -70,6 +71,7 @@ class AwsS3V3Adapter implements FilesystemAdapter, PublicUrlGenerator, ChecksumP
         'WebsiteRedirectLocation',
         'ChecksumAlgorithm',
     ];
+
     /**
      * @var string[]
      */
@@ -88,6 +90,17 @@ class AwsS3V3Adapter implements FilesystemAdapter, PublicUrlGenerator, ChecksumP
         'Metadata',
         'StorageClass',
         'ETag',
+        'VersionId',
+    ];
+
+    /**
+     * @var string[]
+     */
+    private const PUT_OBJECT_TAGGING_AVAILABLE_ARGS = [
+        'ChecksumAlgorithm',
+        'ContentMD5',
+        'ExpectedBucketOwner',
+        'RequestPayer',
         'VersionId',
     ];
 
@@ -503,6 +516,51 @@ class AwsS3V3Adapter implements FilesystemAdapter, PublicUrlGenerator, ChecksumP
             return (string)$request->getUri();
         } catch (Throwable $exception) {
             throw UnableToGenerateTemporaryUrl::dueToError($path, $exception);
+        }
+    }
+
+    private function createObjectTaggingArgs(string $path, string $tags, Config $config)
+    {
+        $keyValueTags = [];
+
+        $tagList = [];
+        parse_str($tags, $tagList)
+
+        foreach ($tagList as $tagKey => $tagValue) {
+            $keyValueTags[] = [
+                'Key' => $tagKey,
+                'Value' => (string) $tagValue,
+            ];
+        }
+
+        $args = [
+            'Bucket' => $this->bucket,
+            'Key' => $path,
+            'Tagging' => [
+                'TagSet' => $keyValueTags,
+            ],
+        ];
+
+        foreach (self::PUT_OBJECT_TAGGING_AVAILABLE_ARGS as $availableArg) {
+            $value = $config->get($availableArg, '__NOT_SET__');
+
+            if ($value !== '__NOT_SET__') {
+                $args[$availableArg] = $value;
+            }
+        }
+
+        return $args;
+    }
+
+    public function putObjectTagging(string $path, string $tags, Config $config): bool
+    {
+        $args = $this->createObjectTaggingArgs($path, $tags, $config);
+
+        try {
+            // See: https://docs.aws.amazon.com/aws-sdk-php/v3/api/api-s3-2006-03-01.html#putobjecttagging
+            return $this->client->putObjectTagging($args);
+        } catch (Throwable $exception) {
+            throw UnableToPutObjectTagging::dueToError($path, $exception);
         }
     }
 }
